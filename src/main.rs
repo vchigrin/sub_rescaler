@@ -1,6 +1,7 @@
 use eyre::Result;
 use std::fs;
 use std::io;
+use std::io::BufWriter;
 use std::path;
 mod subtitles;
 
@@ -20,12 +21,16 @@ fn load_subtitles(file_path: &path::Path) -> Result<Vec<subtitles::SubItem>> {
 }
 
 fn main() {
-    match load_subtitles(path::Path::new("/tmp/example.srt")) {
-        Ok(res) => {
-            println!("Got {} items", res.len());
-        }
+    let items = match load_subtitles(path::Path::new("/tmp/example.srt")) {
+        Ok(res) => res,
         Err(e) => {
             println!("Error {}", e);
+            return;
         }
+    };
+    let file = fs::File::create("/tmp/result.srt").unwrap();
+    let mut writer = subtitles::Writer::new(BufWriter::new(file));
+    for item in items {
+        writer.write_item(item).unwrap();
     }
 }
