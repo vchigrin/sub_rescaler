@@ -1,9 +1,30 @@
+use clap::{Parser, Subcommand};
 use eyre::Result;
 use std::fs;
 use std::io;
 use std::io::BufWriter;
 use std::path;
+mod operations;
 mod subtitles;
+
+#[derive(Debug, Parser)]
+#[command(version, about = "Tool for editing subtitles .srt files.")]
+struct CliParams {
+    #[command(subcommand)]
+    command: Command,
+    /// Input file name
+    #[arg(short, long)]
+    input: path::PathBuf,
+    /// Output file name
+    #[arg(short, long)]
+    output: path::PathBuf,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Offset all items in file to specific duration.
+    Offset { offset_ms: i32 },
+}
 
 fn load_subtitles(file_path: &path::Path) -> Result<Vec<subtitles::SubItem>> {
     let file = fs::File::open(file_path)?;
@@ -20,17 +41,38 @@ fn load_subtitles(file_path: &path::Path) -> Result<Vec<subtitles::SubItem>> {
     Ok(result)
 }
 
-fn main() {
-    let items = match load_subtitles(path::Path::new("/tmp/example.srt")) {
-        Ok(res) => res,
-        Err(e) => {
-            println!("Error {}", e);
-            return;
-        }
-    };
-    let file = fs::File::create("/tmp/result.srt").unwrap();
+fn write_subtitles(items: Vec<subtitles::SubItem>, dst_path: &path::Path) -> Result<()> {
+    let file = fs::File::create(dst_path)?;
     let mut writer = subtitles::Writer::new(BufWriter::new(file));
     for item in items {
         writer.write_item(item).unwrap();
+    }
+    Ok(())
+}
+
+fn handle_command(items: Vec<subtitles::SubItem>, command: Command) -> Vec<subtitles::SubItem> {
+    match command {
+        Command::Offset { offset_ms } => operations::perform_offset(items, offset_ms),
+    }
+}
+
+fn do_main() -> Result<()> {
+    let params = CliParams::parse();
+    println!("Running with params {:?}", params);
+    let original_items = load_subtitles(&params.input)?;
+    let new_items = handle_command(original_items, params.command);
+    write_subtitles(new_items, &params.output)?;
+    Ok(())
+}
+
+fn main() {
+    match do_main() {
+        Ok(_) => {
+            println!("Success")
+        }
+        Err(e) => {
+            println!("Error {}", e);
+            std::process::exit(1);
+        }
     }
 }
