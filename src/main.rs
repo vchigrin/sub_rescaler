@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use eyre::Result;
 use std::fs;
 use std::io;
@@ -20,10 +20,62 @@ struct CliParams {
     output: path::PathBuf,
 }
 
+impl CliParams {
+    fn canonize(&mut self) -> Result<()> {
+        if let Command::SyncWith(args) = &mut self.command {
+            args.alignmen_point.sort_by_key(|fp| fp.src_frame);
+            args.alignmen_point.dedup();
+            if !args
+                .alignmen_point
+                .is_sorted_by_key(|fp| fp.reference_frame)
+            {
+                return Err(eyre::eyre!(
+                    "Bigger src_frame fields must correspond to bigger reference_frame"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FramePair {
+    src_frame: u32,
+    reference_frame: u32,
+}
+
+fn parse_frame_pair(value: &str) -> Result<FramePair> {
+    if let Some(parts) = value.split_once(':') {
+        let src_frame: u32 = parts.0.parse()?;
+        let reference_frame: u32 = parts.1.parse()?;
+        Ok(FramePair {
+            src_frame,
+            reference_frame,
+        })
+    } else {
+        Err(eyre::eyre!(
+            "Frame pair must be in form src_frame_number:reference_frame_number"
+        ))
+    }
+}
+
+#[derive(Debug, Args)]
+struct SyncWithArgs {
+    /// Path to .srt file with reference timings.
+    reference_path: path::PathBuf,
+    /// Pairs of algnment points - timings among corresponding frames
+    /// will be aligned. Format is "src_frame_number:reference_frame_number"
+    #[arg(action=clap::ArgAction::Append, value_parser=parse_frame_pair, short,long)]
+    alignmen_point: Vec<FramePair>,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Offset all items in file to specific duration.
-    Offset { offset_ms: i32 },
+    Offset {
+        offset_ms: i32,
+    },
+    SyncWith(SyncWithArgs),
 }
 
 fn load_subtitles(file_path: &path::Path) -> Result<Vec<subtitles::SubItem>> {
@@ -50,17 +102,25 @@ fn write_subtitles(items: Vec<subtitles::SubItem>, dst_path: &path::Path) -> Res
     Ok(())
 }
 
-fn handle_command(items: Vec<subtitles::SubItem>, command: Command) -> Vec<subtitles::SubItem> {
+fn handle_command(
+    items: Vec<subtitles::SubItem>,
+    command: Command,
+) -> Result<Vec<subtitles::SubItem>> {
     match command {
-        Command::Offset { offset_ms } => operations::perform_offset(items, offset_ms),
+        Command::Offset { offset_ms } => Ok(operations::perform_offset(items, offset_ms)),
+        Command::SyncWith(sync_args) => {
+            let reference_items = load_subtitles(&sync_args.reference_path)?;
+            operations::perform_sync(items, sync_args.alignmen_point, &reference_items)
+        }
     }
 }
 
 fn do_main() -> Result<()> {
-    let params = CliParams::parse();
+    let mut params = CliParams::parse();
+    params.canonize()?;
     println!("Running with params {:?}", params);
     let original_items = load_subtitles(&params.input)?;
-    let new_items = handle_command(original_items, params.command);
+    let new_items = handle_command(original_items, params.command)?;
     write_subtitles(new_items, &params.output)?;
     Ok(())
 }
